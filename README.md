@@ -154,6 +154,11 @@ make
 sudo make install
 ```
 
+### Mellanox Tools
+
+We use Mellanox scripts to set the interrupt affinity. You need to install `mlnx-tools` and `ofed-scripts` in order to be able to use the `set_irq_affinity_bynode.sh` and `set_irq_affinity_cpulist.sh`scripts.
+
+To do so, you can download the latest OFED from Mellanox/NVIDIA website and then use `dpkg` to only install these packages. 
 
 ## Citing our paper
 
