@@ -155,6 +155,15 @@ We use Mellanox scripts to set the interrupt affinity. You need to install `mlnx
 
 To do so, you can download the latest OFED from Mellanox/NVIDIA website and then use `dpkg` to only install these packages. 
 
+
+## CPU Utilization
+
+We use `mpstat` to measure the CPU utilization. To install mpstat, you can run the following command:
+
+```bash
+sudo apt-get install sysstat
+```
+
 [npf-setup]: https://github.com/aliireza/ddio-bench/blob/master/TESTBED.md#network-performance-framework-npf-tool
 [npf-readme]: https://github.com/tbarbette/npf/blob/master/README.md
 [grub-reboot]: https://docs.digitalocean.com/products/droplets/how-to/kernel/use-non-default/
