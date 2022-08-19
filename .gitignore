@@ -1,0 +1,8 @@
+pcm/*
+experiments/npf_build/*
+experiments/testie*/*
+experiments/test_*
+experiments/results/*
+experiments/cluster/*
+.vimhistory
+archives
