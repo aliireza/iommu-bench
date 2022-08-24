@@ -1,7 +1,7 @@
 
 # Testbed
 
-Our experiments mainly requires `npf`, `iperf`, `pcm`, and `perf`. Addditionally, you may need to install a custom Linux kernel and modify GRUB configuration file.
+Our experiments mainly requires `npf`, `iperf`, `pcm`, `perf`, and `pmu-tools`. Addditionally, you may need to install a custom Linux kernel and modify GRUB configuration file.
 
 
 
@@ -99,7 +99,7 @@ sudo reboot
 
 **Check [here][grub-reboot] for more info.**
 
-## PCM Tools and Perf
+## PCM Tools, Perf, PMU Tools
 
 We use PCM tool (i.e., `pcm-iio.x`) to measure the IOTLB metrics on Intel processors. 
 
@@ -121,6 +121,12 @@ However, you may need to build Perf from source to be able to monitor the releva
 
 ```bash
 make tools/perf
+```
+
+We use some scripts from `pmu-tools` to analyze perf output.
+
+```bash
+git clone https://github.com/andikleen/pmu-tools.git
 ```
 
 ## Perf commands

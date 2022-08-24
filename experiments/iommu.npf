@@ -1,0 +1,907 @@
+%info
+Benchmarking IOMMU Performance
+Copyright (c) 2022, Alireza Farshin, KTH Royal Institute of Technology - All Rights Reserved
+
+%config
+timeout=-1
+
+accept_zero={IOTLB-MISSRATE,EL.*,EL,BW,TRANSFER,IBWRITE-*,IBREAD-*,OBWRITE-*,OBREAD-*,IOTLBHIT-*,IOTLBMISS-*,CTXTMISS-*,L1MISS-*,L2MISS-*,L3MISS-*,MEMREAD-*,IIOSAMPLES,IOTLB-*,ZEROQ-*,QUEUE-*,DUTRATE,PPS-RX,RX-PACKETS-PHY,RX-OUT-OF-BUFFER,RX-DISCARDS-PHY}
+
+graph_series_sort=-avg
+
+//============================================================================================//
+// Variable Config
+//============================================================================================//
+
+var_names={BW:Bandwidth (bits/sec)}
+
+var_names+={GEN_LENGTH:Packet Size (Bytes)}
+
+var_names+={THROUGHPUT:Throughput (Gbps)}
+
+var_names+={IOTLB-MISSRATE:IOTLB Miss Rate (%)}
+
+var_names+={RXDESC:RX Descriptors}
+
+var_names+={TXDESC:TX Descriptors}
+
+var_names+={CORES:Server Cores}
+
+var_names+={GEN_CORES:Number of Simultaneous Connections}
+
+var_names+={CONNECTIONS:Number of Connections (Generator)}
+
+var_names+={IOITLB-MISS-PERMIB:IOTLB Misses per MiB}
+
+%variables
+
+//============================================================================================//
+// Variables Definition
+//============================================================================================//
+
+//iPerf
+CORES=32
+GEN_CORES=384
+FREQ=3600
+freqtune:FREQ={1200,1400,1600,1800,2000,2200,2400,2600,2800,3000}
+UNCORE_FREQ=24 // min is 12 (1.2GHz) and max is 24 (2.4GHz)
+uncoretune:UNCORE_FREQ={12,14,16,18,20,22,24}
+SRV_IP=192.168.201.30
+SRV_PORT=5001
+MSG_SIZE=128K
+TEST_TIME=60
+RATEFLAG=
+RATE=
+ratetune:RATE={100M,500M,1G,2G,4G,6G,8G,10G,12G,15G,20G}
+ratetune:RATEFLAG=-b
+MTU=1500
+
+// DDIO configuration
+ddio_value=0x7F0 // 8 bits - default is 0x600 (2 bits)
+ddiotune:ddio_value={0x600,0x700,0x780,0x7C0,0x7E0,0x7F0,0x7F8}
+
+linuxPAUSE=off
+RXDESC=1024
+TXDESC=8192
+LRO=off
+TSO=on
+GRO=on
+LROgen=on
+TSOgen=on
+GROgen=on
+//TXQUEUELEN=20000
+GRO_FLUSH_TIMEOUT=45000
+RX_MODERATION=20
+TX_MODERATION=100
+NAPI_DEFER=0
+//NAPI_DEFER=1
+ADAPTIVE_RX=off
+
+GEN_NUMA_NODE=0
+NUMA_NODE=0
+
+
+linkdrop=0
+tcp_type=cubic
+
+
+// PCM variables
+PCM_OUTPUT=iio.log
+
+//PPS
+PPS_OUTPUT=pps.log
+
+//CPU UTIL
+CPU_UTIL_OUTPUT=cpu.log
+
+//QUEUE
+NQUEUE=32
+QUEUE_OUTPUT=queue.log
+
+//DROP
+DROP_OUTPUT=drop.log
+
+//Variables supposed to be overriden (we do this to avoid the overriden message):
+PCM_PATH=
+EXP_PATH=
+DUT_PMU_PATH=
+
+
+// Perf variables
+PERF_INTERVAL=1000
+PERF_OUTPUT=perf.csv
+
+
+%late_variables
+
+PERF_EVENTS=amd_iommu/mem_pass_untrans/,amd_iommu/mem_pass_pretrans/,amd_iommu/mem_pass_excl/,amd_iommu/mem_target_abort/,amd_iommu/mem_trans_total/,amd_iommu/mem_iommu_tlb_pte_hit/,amd_iommu/mem_iommu_tlb_pte_mis/,amd_iommu/mem_iommu_tlb_pde_hit/,amd_iommu/mem_iommu_tlb_pde_mis/,amd_iommu/mem_dte_hit/,amd_iommu/mem_dte_mis/,amd_iommu/page_tbl_read_tot/,amd_iommu/page_tbl_read_nst/,amd_iommu/page_tbl_read_gst/,amd_iommu/int_dte_hit/,amd_iommu/int_dte_mis/,amd_iommu/cmd_processed/,amd_iommu/cmd_processed_inv/,amd_iommu/tlb_inv/  //Add new events here
+
+
+TIME_EXP_OUTPUT_NAME=EXPAND(${MTU}-${DROP_FREQ_DUT}-${DROP_FREQ_CLIENT}-${linkdrop}-${tcp_type}-${GEN_CORES})
+CLIENT_INTERFACE=EXPAND(${client:0:ifname})
+DUT_INTERFACE=EXPAND(${dut:0:ifname})
+
+
+%perf,-pcm:script@dut sudo=true name=profiler autokill=false waitfor=GEN_BEGIN delay=0
+
+// Run Perf 
+bash perf.sh
+
+%perf,-pcm:script@dut sudo=true name=perf-parser autokill=true waitfor=GEN_DONE delay=3
+
+// Processing Perf output
+echo "Launching Perf script"
+bash perf-processing.sh $PERF_OUTPUT
+
+%perf:file@dut perf.sh
+
+#============================================================================================#
+# perf.sh : Script to launch Perf
+#============================================================================================#
+
+echo "Launching Perf"
+perf stat -x\, -I $PERF_INTERVAL -e ${PERF_EVENTS} -o $PERF_OUTPUT sleep 10000
+
+#============================================================================================#
+
+
+%perf:file@dut perf-processing.sh
+
+#====================================================s========================================#
+# perf-processing.sh : Script to process Perf output to get performance bottlenecks
+#============================================================================================#
+
+input_file=$1
+
+# Create Event list
+events="$PERF_EVENTS"
+events_num=`echo $events | tr , "\n" | wc -l`
+event_list=(`echo "\"RESULT-Timestamp\""` `echo $events | tr , "\n" | awk '{print "RESULT-"$1}' | paste -s -d" " -`)
+
+# Event list: Will be updated automatically - Compare with tmp-perf.csv header if changing PERF_EVENTS
+column_name=("${event_list[@]}")
+column=$(seq 0 $events_num)
+
+# Kill Perf
+killall perf
+
+# Remove the last line (uncomplete)
+sed -i '$ d' $input_file
+
+# Convert the CSV to a better format via interval-normalize.py
+${DUT_PMU_PATH}/interval-normalize.py --na 0 $input_file -o tmp-perf.csv
+
+# Print the results
+
+#Average
+for col in $column;do 
+    # Average Value
+    result=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+    | stdbuf -i0 -o0 -e0 awk -F, -v awkcol=\$(($col + 1)) '{if (NR!=1) print $awkcol;}'\
+    | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+    stdbuf -i0 -o0 -e0  echo ${column_name[$col]}"-avg-C"$PERF_CORE" "$result | stdbuf -i0 -o0 -e0 sed -e 's/\//-/g'
+done
+
+#Sum
+for col in $column;do 
+    # Average Value
+    result=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+    | stdbuf -i0 -o0 -e0 awk -F, -v awkcol=\$(($col + 1)) '{if (NR!=1) print $awkcol;}'\
+    | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+    stdbuf -i0 -o0 -e0  echo ${column_name[$col]}"-sum-C"$PERF_CORE" "$result | stdbuf -i0 -o0 -e0 sed -e 's/\//-/g'
+done
+
+#Median
+for col in $column;do 
+    # Average Value
+    result=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+    | stdbuf -i0 -o0 -e0 awk -F, -v awkcol=\$(($col + 1)) '{if (NR!=1) print $awkcol;}'\
+    | stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max/1k}'\
+    | stdbuf -i0 -o0 -e0 sort -n \
+    | stdbuf -i0 -o0 -e0 awk '{ a[i++]=$1; }END { x=int((i+1)/2); if (x < (i+1)/2) print (a[x-1]+a[x])/2; else print a[x-1];}'`
+    stdbuf -i0 -o0 -e0  echo ${column_name[$col]}"-median-C"$PERF_CORE" "$result | stdbuf -i0 -o0 -e0 sed -e 's/\//-/g'
+done
+
+#Maximum
+
+for col in $column;do 
+    # Average Value
+    result=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+    | stdbuf -i0 -o0 -e0 awk -F, -v awkcol=\$(($col + 1)) '{if (NR!=1) print $awkcol;}'\
+    | stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max/1k}'`
+    stdbuf -i0 -o0 -e0  echo ${column_name[$col]}"-max-C"$PERF_CORE" "$result | stdbuf -i0 -o0 -e0 sed -e 's/\//-/g'
+done
+
+#IOTLB tlb_pte Hit/Miss Rate
+pte_hit_sum=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+| stdbuf -i0 -o0 -e0 awk -F, '{print $7}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+pte_miss_sum=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+| stdbuf -i0 -o0 -e0 awk -F, '{print $8}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+pte_hit_rate=`stdbuf -i0 -o0 -e0 echo \$(($pte_hit_sum *100)) / \$(($pte_hit_sum + $pte_miss_sum ))| bc -l`
+pte_miss_rate=`stdbuf -i0 -o0 -e0 echo \$(($pte_miss_sum *100)) / \$(($pte_hit_sum + $pte_miss_sum ))| bc -l`
+stdbuf -i0 -o0 -e0 echo "RESULT-IOTLB-PTE-HITRATE "$pte_hit_rate
+stdbuf -i0 -o0 -e0 echo "RESULT-IOTLB-PTE-MISSRATE "$pte_miss_rate
+
+#IOTLB tlb_pde Hit/Miss Rate
+pde_hit_sum=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+| stdbuf -i0 -o0 -e0 awk -F, '{print $9}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+pde_miss_sum=`stdbuf -i0 -o0 -e0 cat tmp-perf.csv\
+| stdbuf -i0 -o0 -e0 awk -F, '{print $10}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+pde_hit_rate=`stdbuf -i0 -o0 -e0 echo \$(($pde_hit_sum *100)) / \$(($pde_hit_sum + $pde_miss_sum ))| bc -l`
+pde_miss_rate=`stdbuf -i0 -o0 -e0 echo \$(($pde_miss_sum *100)) / \$(($pde_hit_sum + $pde_miss_sum ))| bc -l`
+stdbuf -i0 -o0 -e0 echo "RESULT-IOTLB-PDE-HITRATE "$pde_hit_rate
+stdbuf -i0 -o0 -e0 echo "RESULT-IOTLB-PDE-MISSRATE "$pde_miss_rate
+
+
+rm -f $input_file
+
+
+%pcmtime:script@dut sudo=true name=iio-tracker autokill=false waitfor=GEN_BEGIN delay=0
+killall pcm-iio.x
+// Enabling MSR
+modprobe msr
+echo "Launching pcm-iio.x"
+cd ${PCM_PATH}
+stdbuf -i0 -o0 -e0 ./pcm-iio.x 2>&1 | stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/' | stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/' | stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"  | stdbuf -i0 -o0 -e0 awk -F"|" '{print $7" "$8}' | stdbuf -i0 -o0 -e0 awk '{print NF" "$0}' | stdbuf -i0 -o0 -e0 awk '{if($1==4){if($5=="K" || $5=="k"){print $1" "$2" "$3" "$4*1000} else if($5=="M"){print $1" "$2" "$3" "$4*1000000} else if($5=="G"){print $1" "$2" "$3" "$4 * 1000000000} else {print $1" "$2" "$3" "$4}}else{print $0}}' | stdbuf -i0 -o0 -e0 awk '{if($3=="K" || $3=="k"){print $2*1000" "$4} else if($3=="M"){print $2*1000000" "$4} else if($3=="G"){print $2 * 1000000000" "$4} else {print $2 $3}}' | stdbuf -i0 -o0 -i0 awk '{print $0" "$2*100/($2+$1)}' | stdbuf -i0 -o0 -i0 awk '{print "RESULT-IOTLBHIT "$1;print "RESULT-IOTLBMISS "$2;print "RESULT-IOTLB-MISSRATE "$3;}' | stdbuf -i0 -o0 -e0 tee iio-results-${TIME_EXP_OUTPUT_NAME}.log
+
+%pcmtime:script@dut sudo=true name=iio-killer autokill=true waitfor=GEN_DONE delay=2
+echo "Killing pcm-iio.x"
+cd ${PCM_PATH}
+mv iio-results-${TIME_EXP_OUTPUT_NAME}.log ${EXP_PATH}
+killall pcm-iio.x
+
+
+
+%pcm:script@dut sudo=true name=profiler autokill=false waitfor=GEN_BEGIN delay=0
+
+killall pcm-iio.x
+// Enabling MSR
+modprobe msr
+
+// Run IIO monitoring
+bash iio.sh
+
+%pcm:script@dut sudo=true name=iio-parser autokill=true waitfor=GEN_DONE delay=3
+
+// Processing pcm-iio.x output
+echo ${PCM_PATH}/${PCM_OUTPUT} 
+echo "Launching IIO-parser script"
+unbuffer bash iio-processing.sh ${PCM_PATH}/${PCM_OUTPUT}
+rm -f ${PCM_PATH}/${PCM_OUTPUT}
+
+
+
+%file@dut iio.sh
+
+#============================================================================================#
+# iio.sh : Script to launch pcm-iio.x
+#============================================================================================#
+
+echo "Launching pcm-iio.x"
+cd ${PCM_PATH}
+./pcm-iio.x 2>&1 > $PCM_OUTPUT
+
+
+#======================================================================
+
+
+
+#============================================================================================#
+
+%file@dut iio-processing.sh
+
+#============================================================================================#
+# iio-processing.sh : Script to process/parse pcm-iio.x output to get IIO (IOMMU-related) events
+#============================================================================================#
+
+input_file=$1
+monitoring_cores=$(seq 0 0)
+column=$(seq 3 13)
+column_name=("NA" "NA" "NA" "RESULT-IBWRITE" "RESULT-IBREAD" "RESULT-OBREAD" "RESULT-OBWRITE" "RESULT-IOTLBHIT" "RESULT-IOTLBMISS" "RESULT-CTXTMISS" "RESULT-L1MISS" "RESULT-L2MISS" "RESULT-L3MISS" "RESULT-MEMREAD")
+
+for c in $monitoring_cores; do
+	for col in $column;do
+
+	#Sum
+	result=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 awk -F"|" -v column=$col '{print $column}'\
+	| stdbuf -i0 -o0 -e0 awk '{if($2=="K" || $2=="k"){print $1*1000} else if($2=="M"){print $1*1000000} else if($2=="G"){print $1 * 1000000000} else {print $1}}'\
+	| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+	stdbuf -i0 -o0 -e0 echo ${column_name[$col]}"-sum "$result
+
+	#Average
+	result=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 awk -F"|" -v column=$col '{print $column}'\
+	| stdbuf -i0 -o0 -e0 awk '{if($2=="K" || $2=="k"){print $1*1000} else if($2=="M"){print $1*1000000} else if($2=="G"){print $1 * 1000000000} else {print $1}}'\
+	| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+	stdbuf -i0 -o0 -e0 echo ${column_name[$col]}"-avg "$result" "${column_scale[$col]}
+
+	#Median
+	result=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 awk -F"|" -v column=$col '{print $column}'\
+	| stdbuf -i0 -o0 -e0 awk '{if($2=="K" || $2=="k"){print $1*1000} else if($2=="M"){print $1*1000000} else if($2=="G"){print $1 * 1000000000} else {print $1}}'\
+	| stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max/1k}'\
+	| stdbuf -i0 -o0 -e0 sort -n \
+	| stdbuf -i0 -o0 -e0 awk '{ a[i++]=$1; }END { x=int((i+1)/2); if (x < (i+1)/2) print (a[x-1]+a[x])/2; else print a[x-1];}'`
+	stdbuf -i0 -o0 -e0 echo ${column_name[$col]}"-median "$result
+
+	#Maximum
+	result=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 awk -F"|" -v column=$col '{print $column}'\
+	| stdbuf -i0 -o0 -e0 awk '{if($2=="K" || $2=="k"){print $1*1000} else if($2=="M"){print $1*1000000} else if($2=="G"){print $1 * 1000000000} else {print $1}}'\
+	| stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max/1k}'`
+	stdbuf -i0 -o0 -e0 echo ${column_name[$col]}"-max "$result
+	
+	done
+
+	#Samples
+	result=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 wc -l`
+	stdbuf -i0 -o0 -e0 echo "RESULT-IIOSAMPLES "$result
+
+	#IOTLB Hit/Miss Rate
+	hit_sum=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 awk -F"|" '{print $7}'\
+	| stdbuf -i0 -o0 -e0 awk '{if($2=="K" || $2=="k"){print $1*1000} else if($2=="M"){print $1*1000000} else if($2=="G"){print $1 * 1000000000} else {print $1}}'\
+	| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+	miss_sum=`stdbuf -i0 -o0 -e0 cat $input_file\
+	| stdbuf -i0 -o0 -e0 awk '/Socket0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 awk '/IIO Stack 0/,/17:00.0/'\
+	| stdbuf -i0 -o0 -e0 grep " Part0 (1st x16/x8/x4)"\
+	| stdbuf -i0 -o0 -e0 awk -F"|" '{print $8}'\
+	| stdbuf -i0 -o0 -e0 awk '{if($2=="K" || $2=="k"){print $1*1000} else if($2=="M"){print $1*1000000} else if($2=="G"){print $1 * 1000000000} else {print $1}}'\
+	| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total}'`
+	hit_rate=`stdbuf -i0 -o0 -e0 echo \$(($hit_sum *100)) / \$(($hit_sum + $miss_sum ))| bc -l`
+	miss_rate=`stdbuf -i0 -o0 -e0 echo \$(($miss_sum *100)) / \$(($hit_sum + $miss_sum ))| bc -l`
+	stdbuf -i0 -o0 -e0 echo "RESULT-IOTLB-HITRATE "$hit_rate
+	stdbuf -i0 -o0 -e0 echo "RESULT-IOTLB-MISSRATE "$miss_rate
+done
+
+
+#============================================================================================#
+
+
+%file@dut pps.sh 
+
+#============================================================================================#
+# pps.sh : Script to get pps for the input interface
+#============================================================================================#
+
+
+INTERVAL="1"  # update interval in seconds
+
+if [ -z "$1" ]; then
+        echo
+        echo usage: $0 [network-interface]
+        echo
+        echo e.g. $0 eth0
+        echo
+        echo shows packets-per-second
+        exit
+fi
+
+IF=$1
+
+while true
+do
+        R1=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/rx_packets`
+	RR1=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/rx_bytes`
+        T1=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/tx_packets`
+	TT1=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/tx_bytes`
+        sleep $INTERVAL
+        R2=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/rx_packets`
+	RR2=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/rx_bytes`
+        T2=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/tx_packets`
+	TT2=`stdbuf -i0 -o0 -e0 cat /sys/class/net/$1/statistics/tx_bytes`
+        TXPPS=`stdbuf -i0 -o0 -e0 expr $T2 - $T1`
+        RXPPS=`stdbuf -i0 -o0 -e0 expr $R2 - $R1`
+        TXTH=`stdbuf -i0 -o0 -e0 expr $TT2 \* 8 - $TT1 \* 8`
+        RXTH=`stdbuf -i0 -o0 -e0 expr $RR2 \* 8 - $RR1 \* 8`
+        stdbuf -i0 -o0 -e0 echo "TX $1: $TXPPS pkts/s RX $1: $RXPPS pkts/s"
+	stdbuf -i0 -o0 -e0 echo "TX $1: $TXTH bps RX $1: $RXTH bps"
+ done
+
+%file@dut pps-processing.sh
+
+#============================================================================================#
+# pps-processing.sh : Script to process pps.sh output
+#============================================================================================#
+
+
+input_file=$1
+
+#Average
+result_rx=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep pkts\
+| stdbuf -i0 -o0 -e0 awk '{if($3!=0 || $7!=0){print $7}}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+result_tx=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep pkts\
+| stdbuf -i0 -o0 -e0 awk '{if($3!=0 || $7!=0){print $3}}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+stdbuf -i0 -o0 -e0 echo "RESULT-PPS-RX-avg "$result_rx
+stdbuf -i0 -o0 -e0 echo "RESULT-PPS-TX-avg "$result_tx
+
+#Maximum
+result_rx=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep pkts\
+| stdbuf -i0 -o0 -e0 awk '{if($3!=0 || $7!=0){print $7}}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max}'`
+result_tx=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep pkts\
+| stdbuf -i0 -o0 -e0 awk '{if($3!=0 || $7!=0){print $3}}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max}'`
+stdbuf -i0 -o0 -e0 echo "RESULT-PPS-RX-max "$result_rx
+stdbuf -i0 -o0 -e0 echo "RESULT-PPS-TX-max "$result_tx
+
+#Average
+result_rx=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep bps\
+| stdbuf -i0 -o0 -e0 awk '{if($3!=0 || $7!=0){print $7}}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+result_tx=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{if($3!=0 || $7!=0){print $3}}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+stdbuf -i0 -o0 -e0 echo "RESULT-TH-RX-avg "$result_rx
+stdbuf -i0 -o0 -e0 echo "RESULT-TH-TX-avg "$result_tx
+
+
+%pps:script@dut sudo=true name=pps autokill=false waitfor=GEN_BEGIN delay=0
+
+// Run pps
+stdbuf -i0 -o0 -e0 bash pps.sh ${DUT_INTERFACE} > ${PPS_OUTPUT}
+
+%pps:script@dut sudo=true name=pps-parser autokill=false waitfor=GEN_DONE delay=0
+
+// Processing pps.sh output
+echo "Launching pps-parser script"
+stdbuf -i0 -o0 -e0 bash pps-processing.sh ${PPS_OUTPUT}
+rm -f ${PPS_OUTPUT}
+
+%cpu:script@dut sudo=true name=cpu autokill=false waitfor=GEN_BEGIN delay=0
+
+// Run pps
+mpstat -N 0 -n 1 > $CPU_UTIL_OUTPUT
+
+%cpu:script@dut sudo=true name=cpu-parser autokill=false waitfor=GEN_DONE delay=0
+
+// Processing cpu.sh output
+echo "Launching cpu-parser script"
+stdbuf -i0 -o0 -e0 bash cpu-processing.sh ${CPU_UTIL_OUTPUT}
+//rm -f ${CPU_UTIL_OUTPUT}
+
+%ppstime:script@dut sudo=true name=pps-tracker autokill=false waitfor=GEN_BEGIN delay=0
+
+// Run pps
+stdbuf -i0 -o0 -e0 bash pps.sh ${DUT_INTERFACE} | stdbuf -i0 -o0 -e0 awk '{print "RESULT-PPS-RX "$7}' | stdbuf -i0 -o0 -e0 tee pps-results-${TIME_EXP_OUTPUT_NAME}.log
+
+%ppstime:script@dut sudo=true name=pps-killer autokill=false waitfor=GEN_DONE delay=0
+echo "killing PPS tracker"
+mv pps-results-${TIME_EXP_OUTPUT_NAME}.log ${EXP_PATH}
+
+%file@dut cpu-processing.sh
+
+#============================================================================================#
+# cpu-processing.sh : Script to process cpu.sh output
+#============================================================================================#
+
+
+input_file=$1
+
+#mpstat -N 0 -n 1
+#10:13:17    NODE    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
+#10:13:18       0    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
+
+#Average
+usr_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 head -n -1\
+| stdbuf -i0 -o0 -e0 awk '{print $4}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+sys_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 head -n -1\
+| stdbuf -i0 -o0 -e0 awk '{print $6}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+soft_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 head -n -1\
+| stdbuf -i0 -o0 -e0 awk '{print $9}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+idle_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 head -n -1\
+| stdbuf -i0 -o0 -e0 awk '{print $13}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+util_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 head -n -1\
+| stdbuf -i0 -o0 -e0 awk '{print 100 - $13}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+
+echo "RESULT-CPU-user-avg "$usr_avg
+echo "RESULT-CPU-sys-avg "$sys_avg
+echo "RESULT-CPU-soft-avg "$soft_avg
+echo "RESULT-CPU-idle-avg "$idle_avg
+echo "RESULT-CPU-util-avg "$util_avg
+
+%file@dut drop.sh 
+
+#============================================================================================#
+# drop.sh : Script to get RX drops for the input interface
+#============================================================================================#
+
+INTERVAL="1"  # update interval in seconds
+
+if [ -z "$1" ]; then
+        echo
+        echo usage: $0 [network-interface]
+        echo
+        echo e.g. $0 eth0
+        echo
+        echo shows packets-per-second
+        exit
+fi
+
+IF=$1
+
+while true
+do
+        R0=`stdbuf -i0 -o0 -e0 ethtool -S $1 | stdbuf -i0 -o0 -e0 grep rx_packets_phy | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        R1=`stdbuf -i0 -o0 -e0 ethtool -S $1 | stdbuf -i0 -o0 -e0 grep rx_out_of_buffer | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        R2=`stdbuf -i0 -o0 -e0 ethtool -S $1 | stdbuf -i0 -o0 -e0 grep rx_discards_phy | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        sleep $INTERVAL
+        RR0=`stdbuf -i0 -o0 -e0 ethtool -S $1 | stdbuf -i0 -o0 -e0 grep rx_packets_phy | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        RR1=`stdbuf -i0 -o0 -e0 ethtool -S $1 | stdbuf -i0 -o0 -e0 grep rx_out_of_buffer | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        RR2=`stdbuf -i0 -o0 -e0 ethtool -S $1 | stdbuf -i0 -o0 -e0 grep rx_discards_phy | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        RX0PS=`stdbuf -i0 -o0 -e0 expr $RR0 - $R0`
+        RX1PS=`stdbuf -i0 -o0 -e0 expr $RR1 - $R1`
+        RX2PS=`stdbuf -i0 -o0 -e0 expr $RR2 - $R2`
+        stdbuf -i0 -o0 -e0 echo "rx_packets_phy $1: $RX0PS pkts/s rx_out_of_buffer $1: $RX1PS drop/s rx_discards_phy $1: $RX2PS drop/s"
+ done
+
+
+
+%file@dut drop-processing.sh
+
+#============================================================================================#
+# drop-processing.sh : Script to process drop.sh output
+#============================================================================================#
+
+
+input_file=$1
+
+#SUM
+rx_packets_phy=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{print $3}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{total=0;}{ total +=$1;count++;} END{print total}'`
+
+rx_out_of_buffer=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{print $7}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{total=0;}{ total +=$1;count++;} END{print total}'`
+
+rx_discards_phy=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 awk '{print $11}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{total=0;}{ total +=$1;count++;} END{print total}'`
+
+stdbuf -i0 -o0 -e0 echo "RESULT-RX-PACKETS-PHY "$rx_packets_phy
+stdbuf -i0 -o0 -e0 echo "RESULT-RX-OUT-OF-BUFFER "$rx_out_of_buffer
+stdbuf -i0 -o0 -e0 echo "RESULT-RX-DISCARDS-PHY "$rx_discards_phy
+
+
+%drop:script@dut sudo=true name=drop autokill=false waitfor=GEN_BEGIN delay=0
+
+// Run drop
+stdbuf -i0 -o0 -e0 bash drop.sh ${DUT_INTERFACE} > ${DROP_OUTPUT}
+
+%drop:script@dut sudo=true name=drop-parser autokill=false waitfor=GEN_DONE delay=0
+
+// Processing drop.sh output
+echo "Launching drop-parser script"
+stdbuf -i0 -o0 -e0 bash drop-processing.sh ${DROP_OUTPUT}
+rm -f ${DROP_OUTPUT}
+
+
+%file@dut queue.sh 
+
+#============================================================================================#
+# queue.sh : Script to get pps for each queue of the input interface & calculate load imbalance factor + #zero-packet queues
+#============================================================================================#
+
+INTERVAL="1"  # update interval in seconds
+
+if [[ -z "$1" ]] || [[ -z "$2" ]]; then
+        echo
+        echo usage: $0 [network-interface] [number-queues]
+        echo
+        echo e.g. $0 eth0 18
+        echo
+        echo shows packet per second for each rx queue
+        exit
+fi
+
+IF=$1
+QN=$2
+while true
+do
+        rm -f RX1$IF RX2$IF
+        `sudo ethtool -S $IF | stdbuf -i0 -o0 -e0 grep -e "rx[0-9][0-9]*_packets" | stdbuf -i0 -o0 -e0 head -n $QN > RX1$IF`
+        sleep $INTERVAL
+        `sudo ethtool -S $IF | stdbuf -i0 -o0 -e0 grep -e "rx[0-9][0-9]*_packets" | stdbuf -i0 -o0 -e0 head -n $QN > RX2$IF`
+        DIFF_OUTPUT=`paste  <(cat RX1$IF | stdbuf -i0 -o0 -e0 awk '{print $1}') <(cat RX1$IF | stdbuf -i0 -o0 -e0 awk '{print $2}') <(cat RX2$IF | stdbuf -i0 -o0 -e0 awk '{print $2}') | stdbuf -i0 -o0 -e0 awk '{print $1" "$3 - $2}'`
+        # clear #add for periodic interval
+        # echo "RXNUM $1: pkts/s"
+        # echo "$DIFF_OUTPUT"
+        RXDIFF=`stdbuf -i0 -o0 -e0 echo "$DIFF_OUTPUT" | stdbuf -i0 -o0 -e0 awk '{print $2}'`
+        # echo "$RXDIFF"
+        MAX=`stdbuf -i0 -o0 -e0 echo "$RXDIFF" | stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max}'`
+        MIN=`stdbuf -i0 -o0 -e0 echo "$RXDIFF" | stdbuf -i0 -o0 -e0 awk -v max=$MAX 'BEGIN{min=max}{if ($1<min) min=$1; fi} END{print min}'`
+        N_ZERO=`stdbuf -i0 -o0 -e0 echo "$RXDIFF" | stdbuf -i0 -o0 -e0 grep "\b0" | stdbuf -i0 -o0 -e0 wc -l`
+        # echo $N_ZERO
+        # echo "$MIN"
+        # echo "$MAX"
+        if [ $MIN -eq 0 ]; then 
+                stdbuf -i0 -o0 -e0 echo "IMBALANCE-RATIO INF"
+                stdbuf -i0 -o0 -e0 echo "N_ZERO "$N_ZERO
+        else
+                stdbuf -i0 -o0 -e0 echo "IMBALANCE-RATIO "\$(( $MAX / $MIN ))
+                stdbuf -i0 -o0 -e0 echo "N_ZERO "$N_ZERO
+        fi
+ done
+
+
+%file@dut queue-processing.sh
+
+#============================================================================================#
+# queue-processing.sh : Script to process queue.sh output
+#============================================================================================#
+
+
+input_file=$1
+
+#Average
+result_imbalance=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep IMBALANCE | stdbuf -i0 -o0 -e0 awk '{print $2}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+result_zero_q=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep ZERO | stdbuf -i0 -o0 -e0 awk '{print $2}'\
+| stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
+stdbuf -i0 -o0 -e0 echo "RESULT-QUEUE-IMBALANCE-avg "$result_imbalance
+stdbuf -i0 -o0 -e0 echo "RESULT-ZEROQ-avg "$result_zero_q
+
+#Maximum
+result_imbalance=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep IMBALANCE | stdbuf -i0 -o0 -e0 awk '{print $2}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max}'`
+result_zero_q=`stdbuf -i0 -o0 -e0 cat $input_file\
+| stdbuf -i0 -o0 -e0 grep ZERO | stdbuf -i0 -o0 -e0 awk '{print $2}'\
+| stdbuf -i0 -o0 -e0 awk 'BEGIN{max=0}{if ($1>max) max=$1; fi} END{print max}'`
+stdbuf -i0 -o0 -e0 echo "RESULT-QUEUE-IMBALANCE-max "$result_imbalance
+stdbuf -i0 -o0 -e0 echo "RESULT-ZEROQ-max "$result_zero_q
+
+
+%queue:script@dut sudo=true name=queue autokill=false waitfor=GEN_BEGIN delay=0
+
+// Run queue
+bash queue.sh ${DUT_INTERFACE} ${NQUEUE} > ${QUEUE_OUTPUT}
+
+%queue:script@dut sudo=true name=queue-parser autokill=false waitfor=GEN_DONE delay=0
+
+// Processing pps.sh output
+echo "Launching queue-parser script"
+unbuffer bash queue-processing.sh ${QUEUE_OUTPUT}
+rm -f ${QUEUE_OUTPUT}
+
+#============================================================================================//
+# dut: Frequency
+#============================================================================================//
+
+
+
+%script@dut sudo=true autokill=false waitfor=READY delay=0
+
+// Set processor frequency
+echo "Setting cpu frequency of 0-\$(( $(nproc) - 1))"
+sudo cpupower --cpu 0-\$(( $(nproc) - 1)) frequency-set -d ${FREQ}M -u ${FREQ}M 2> /dev/null 1> /dev/null
+
+// Enabling MSR
+modprobe msr
+
+// Set uncore frequency
+uncore_value=$(( ($UNCORE_FREQ << 8 ) +  $UNCORE_FREQ))
+echo "Setting Uncore Frequency to $(( $UNCORE_FREQ / 10))GHz"
+printf 'Setting UNCORE_RATIO_LIMIT to 0x%x\n' $uncore_value
+wrmsr 0x620 $uncore_value
+
+// Set RX Descriptors
+ethtool -G ${DUT_INTERFACE} rx $RXDESC tx $TXDESC 2> /dev/null 1> /dev/null
+echo "RX DESC set to $RXDESC"
+echo "TX DESC set to $TXDESC"
+
+// Set GRO TSO LRO
+ethtool -K ${DUT_INTERFACE} lro $LRO gro $GRO tso $TSO 2> /dev/null 1> /dev/null
+
+// Setting DDIO WAYS
+wrmsr 0xC8B $ddio_value
+
+// Setting MTU Size
+ifconfig ${DUT_INTERFACE} mtu $MTU 2> /dev/null 1> /dev/null
+
+//seting tx queue len 
+//ifconfig ${DUT_INTERFACE} txqueuelen en ${TXQUEUELEN}
+
+// Set PAUSE Frames
+ethtool -A ${DUT_INTERFACE} rx ${linuxPAUSE} tx ${linuxPAUSE} 2>/dev/null 1> /dev/null
+
+// Set NQUEUE
+ethtool -L ${DUT_INTERFACE} combined ${NQUEUE}
+service irqbalance stop
+set_irq_affinity_bynode.sh 0 ${DUT_INTERFACE} 2>/dev/null 1> /dev/null
+
+sysctl net.ipv4.tcp_congestion_control=${tcp_type}
+
+
+
+#============================================================================================//
+# client: MTU
+#============================================================================================//
+
+
+%script@client sudo=true autokill=false delay=0
+
+// Set processor frequency
+echo "Setting cpu frequency of 0-\$(( $(nproc) - 1))"
+sudo cpupower --cpu 0-\$(( $(nproc) - 1)) frequency-set -d 3600M -u 3600M 2> /dev/null 1> /dev/null
+
+echo ${CLIENT_INTERFACE}
+
+// Setting MTU Size
+ifconfig ${CLIENT_INTERFACE} mtu $MTU 2>/dev/null 1> /dev/null
+
+//seting tx queue len 
+//ifconfig ${CLIENT_INTERFACE} txqueuelen en ${TXQUEUELEN}
+
+// Setting descs
+ethtool -G ${CLIENT_INTERFACE} rx 8192 tx 8192 2>/dev/null 1> /dev/null
+
+// Set PAUSE Frames
+ethtool -A ${CLIENT_INTERFACE} rx ${linuxPAUSE} tx ${linuxPAUSE} 2>/dev/null 1> /dev/null
+
+// Set NQUEUE
+ethtool -L ${CLIENT_INTERFACE} combined 32
+service irqbalance stop
+set_irq_affinity_bynode.sh ${GEN_NUMA_NODE} ${CLIENT_INTERFACE} 2>/dev/null 1> /dev/null
+
+
+// Set PAUSE Frames
+ethtool -A ${CLIENT_INTERFACE} rx ${linuxPAUSE} tx ${linuxPAUSE} 2>/dev/null 1> /dev/null
+
+// Set GRO TSO LRO
+ethtool -K ${CLIENT_INTERFACE} lro $LROgen gro $GROgen tso $TSOgen 2>/dev/null 1> /dev/null
+
+// Set congestion control algorithm
+
+sysctl net.ipv4.tcp_congestion_control=${tcp_type}
+
+// Set open files limit 
+sudo su -c 'ulimit -n 1048576' 
+ulimit -n 1048576
+
+
+//============================================================================================//
+// dut: iPerf
+//============================================================================================//
+
+
+%iperf:script@dut sudo=true autokill=false 
+stdbuf -i0 -o0 -e0 echo "EVENT READY"
+
+killall iperf
+core_set=`for i in $(seq 0 $((${CORES}-1))); do echo -n $i","; done |sed 's/.$//'`
+echo $core_set
+//taskset -c $core_set iperf -s -m
+numactl --cpunodebind=${NUMA_NODE} iperf -s -m
+
+
+%iperf:script@client sudo=true autokill=false delay=5
+
+stdbuf -i0 -o0 -e0 echo "EVENT GEN_BEGIN"
+echo "Running iPerf"
+echo
+
+core_set_client=`for i in $(seq 0 $((${GEN_CORES}-1))); do c=$(bc -l <<<"2*$i + 1"); echo -n $c","; done | sed 's/.$//'`
+
+numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m | stdbuf -i0 -o0 -e0 tee results
+//iperf -c $SRV_IP -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | tee results
+//taskset -c ${core_set_client} iperf -c $SRV_IP -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | stdbuf -i0 -o0 -e0 tee results
+bw=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($7=="Gbits/sec"){print $6*1000000000} else if($7=="Mbits/sec"){print $6 * 1000000} else if ($7=="Kbits/sec"){print $6 * 1000}else {print $6}}')
+transfer=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($5=="GBytes"){print $4*1000000000} else if($5=="MBytes"){print $4 * 1000000} else if ($5=="KBytes"){print $4 * 1000}else {print $4}}')
+mss=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep MSS | stdbuf -i0 -o0 -e0 head -n 1 | stdbuf -i0 -o0 -e0 awk -F"=" '{print $2}' | stdbuf -i0 -o0 -e0 awk -F")" '{print $1}')
+stdbuf -i0 -o0 -e0 echo "RESULT-BW ${bw}"
+stdbuf -i0 -o0 -e0 echo "RESULT-TRANSFER ${transfer}"
+stdbuf -i0 -o0 -e0 echo "RESULT-MSS ${mss}"
+
+stdbuf -i0 -o0 -e0 echo "EVENT GEN_DONE"
+
+
+%reverseiperf:script@dut sudo=true autokill=false delay=10
+
+stdbuf -i0 -o0 -e0 echo "EVENT GEN_BEGIN"
+echo "Running iPerf"
+echo
+
+core_set_client=`for i in $(seq 0 $((${GEN_CORES}-1))); do c=$(bc -l <<<"2*$i + 1"); echo -n $c","; done | sed 's/.$//'`
+
+numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m | stdbuf -i0 -o0 -e0 tee results
+//iperf -c $SRV_IP -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | tee results
+//taskset -c ${core_set_client} iperf -c $SRV_IP -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | stdbuf -i0 -o0 -e0 tee results
+bw=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($7=="Gbits/sec"){print $6*1000000000} else if($7=="Mbits/sec"){print $6 * 1000000} else if ($7=="Kbits/sec"){print $6 * 1000}else {print $6}}')
+transfer=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($5=="GBytes"){print $4*1000000000} else if($5=="MBytes"){print $4 * 1000000} else if ($5=="KBytes"){print $4 * 1000}else {print $4}}')
+mss=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep MSS | stdbuf -i0 -o0 -e0 head -n 1 | stdbuf -i0 -o0 -e0 awk -F"=" '{print $2}' | stdbuf -i0 -o0 -e0 awk -F")" '{print $1}')
+stdbuf -i0 -o0 -e0 echo "RESULT-BW ${bw}"
+stdbuf -i0 -o0 -e0 echo "RESULT-TRANSFER ${transfer}"
+stdbuf -i0 -o0 -e0 echo "RESULT-MSS ${mss}"
+
+stdbuf -i0 -o0 -e0 echo "EVENT GEN_DONE"
+
+
+//============================================================================================//
+// dut: iPerf
+//============================================================================================//
+
+
+%iperftime:script@dut sudo=true autokill=false
+stdbuf -i0 -o0 -e0 echo "EVENT READY"
+
+killall iperf
+core_set=`for i in $(seq 0 $((${CORES}-1))); do echo -n $i","; done |sed 's/.$//'`
+echo $core_set
+//taskset -c $core_set iperf -s -m
+numactl --cpunodebind=0 iperf -s -m
+
+//============================================================================================//
+// client: iPerf
+//============================================================================================//
+
+
+%iperftime:script@client sudo=true waitfor=READY autokill=false delay=3
+
+stdbuf -i0 -o0 -e0 echo "EVENT GEN_BEGIN"
+echo "Running iPerf"
+echo
+
+core_set_client=`for i in $(seq 0 $((${GEN_CORES}-1))); do c=$(bc -l <<<"2*$i + 1"); echo -n $c","; done | sed 's/.$//'`
+
+stdbuf -i0 -o0 -e0 numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m -i 1 > iperf-results
+bw=$(stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 tail -n 1 | stdbuf -i0 -o0 -e0 awk '{if($7=="Gbits/sec"){print $6*1000000000} else if($7=="Mbits/sec"){print $6 * 1000000} else if ($7=="Kbits/sec"){print $6 * 1000}else {print $6}}')
+transfer=$(stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 tail -n 1 | stdbuf -i0 -o0 -e0 awk '{if($5=="GBytes"){print $4*1000000000} else if($5=="MBytes"){print $4 * 1000000} else if ($5=="KBytes"){print $4 * 1000}else {print $4}}')
+mss=$(stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep MSS | stdbuf -i0 -o0 -e0 head -n 1 | stdbuf -i0 -o0 -e0 awk -F"=" '{print $2}' | stdbuf -i0 -o0 -e0 awk -F")" '{print $1}')
+stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep SUM > iperf-results-${TIME_EXP_OUTPUT_NAME}.log 
+mv iperf-results-${TIME_EXP_OUTPUT_NAME}.log ${EXP_PATH}
+stdbuf -i0 -o0 -e0 echo "RESULT-BW ${bw}"
+stdbuf -i0 -o0 -e0 echo "RESULT-TRANSFER ${transfer}"
+stdbuf -i0 -o0 -e0 echo "RESULT-MSS ${mss}"
+
+stdbuf -i0 -o0 -e0 echo "EVENT GEN_DONE"
