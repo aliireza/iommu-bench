@@ -106,8 +106,10 @@ We use PCM tool (i.e., `pcm-iio.x`) to measure the IOTLB metrics on Intel proces
 ```bash
 git clone https://github.com/opcm/pcm.git
 cd pcm
-make
-sudo make install
+mkdir build
+cd build
+cmake ..
+cmake --build .
 ```
 
 
@@ -170,6 +172,16 @@ We use `mpstat` to measure the CPU utilization. To install mpstat, you can run t
 sudo apt-get install sysstat
 ```
 
+## RPS and Accelerated RFS (aRFS)
+
+You can set up Receive Packet Steering (RPS) or Accelerated Receive Flow Steering (aRFS) for better load balancing.
+
+For more information, check the following links:
+- [What is the main different between RSS, RPS, and RFS?][rss-rps-rfs]
+- [How to configure aRFS on ConnectX-4][arfs-mellanox]
+
 [npf-setup]: https://github.com/aliireza/ddio-bench/blob/master/TESTBED.md#network-performance-framework-npf-tool
 [npf-readme]: https://github.com/tbarbette/npf/blob/master/README.md
 [grub-reboot]: https://docs.digitalocean.com/products/droplets/how-to/kernel/use-non-default/
+[rss-rps-rfs]: https://stackoverflow.com/questions/44958511/what-is-the-main-difference-between-rss-rps-and-rfs
+[arfs-mellanox]: https://support.mellanox.com/s/article/howto-configure-arfs-on-connectx-4

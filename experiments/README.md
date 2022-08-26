@@ -13,6 +13,10 @@ The details of the experiments are as follows:
   - `make test_iperf_rate_iommu_on`: You should enable IOMMU and then run this test to gather the data for IOMMU=ON.
   - `make test_iperf_rate`: Run this after executing the two previous rules to generate a graph with both IOMMU=OFF and IOMMU=ON results. 
 
+<!-- <p align="center">
+<img src="images/test_iperf_rate.png"  alt="iPerf-Rate" width="50%">
+</p> -->
+
 * **iPerf Performance vs. MTU**: This experiment compares the performance of iPerf & IOTLB with/without IOMMU for different MTU sizes. Execute the appropriate Makefile rule, as follows:
   - `make test_iperf_mtu_iommu_off`: You should disable IOMMU and then run this test to gather the data for IOMMU=OFF.
   - `make test_iperf_mtu_iommu_on`: You should enable IOMMU and then run this test to gather the data for IOMMU=ON.
