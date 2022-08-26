@@ -35,7 +35,7 @@ var_names+={GEN_CORES:Number of Simultaneous Connections}
 
 var_names+={IOTLB-MISS-PERMIB:IOTLB Misses per MiB}
 
-graph_cross_reference={BW:RATE, IOTLB-MISS-PERMIB:RATE, CPU-util-avg:RATE, IOTLB-MISSRATE:RATE}
+//graph_cross_reference={BW:RATE, IOTLB-MISS-PERMIB:RATE, CPU-util-avg:RATE, IOTLB-MISSRATE:RATE}
 //graph_cross_reference+={BW:GEN_RATE, IOTLB-MISS-PERMIB:GEN_RATE, CPU-util-avg:GEN_RATE, IOTLB-MISSRATE:GEN_RATE}
 
 %variables
