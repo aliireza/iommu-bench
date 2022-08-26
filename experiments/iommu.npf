@@ -33,9 +33,10 @@ var_names+={CORES:Server Cores}
 
 var_names+={GEN_CORES:Number of Simultaneous Connections}
 
-var_names+={CONNECTIONS:Number of Connections (Generator)}
-
 var_names+={IOTLB-MISS-PERMIB:IOTLB Misses per MiB}
+
+graph_cross_reference={BW:RATE, IOTLB-MISS-PERMIB:RATE, CPU-util-avg:RATE, IOTLB-MISSRATE:RATE}
+//graph_cross_reference+={BW:GEN_RATE, IOTLB-MISS-PERMIB:GEN_RATE, CPU-util-avg:GEN_RATE, IOTLB-MISSRATE:GEN_RATE}
 
 %variables
 
@@ -127,9 +128,13 @@ CLIENT_INTERFACE=EXPAND(${client:0:ifname})
 DUT_INTERFACE=EXPAND(${dut:0:ifname})
 
 %pyexit
-// Calculate IOLTB Per MiB
+# Calculate IOLTB Per MiB
+import sys
 RESULTS["IOTLB-MISS-PERMIB"] = (RESULTS["IOTLBMISS-sum"]/60) / (RESULTS["BW"]/(8*1024*1024))
-
+print("RESULT-IOTLB-MISS-PERMIB ",RESULTS["IOTLB-MISS-PERMIB"],file=sys.stdout)
+#rate = RESULTS["RATE"]
+#RESULTS["GEN_RATE"] = (rate[:-1] * RESULTS["GEN_CORES"])
+#print("RESULT-GEN_RATE ", RESULTS["GEN_RATE"],file=sys.stdout)
 
 %perf,-pcm:script@dut sudo=true name=profiler autokill=false waitfor=GEN_BEGIN delay=0
 
@@ -523,32 +528,36 @@ input_file=$1
 #mpstat -N 0 -n 1
 #10:13:17    NODE    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
 #10:13:18       0    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
+# or
+#10:13:17 PM    NODE    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
+#10:13:18 PM      0    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00    0.00  100.00
+# You have to double check the format
 
 #Average
 usr_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
-| stdbuf -i0 -o0 -e0 awk '{if($2==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
 | stdbuf -i0 -o0 -e0 head -n -1\
-| stdbuf -i0 -o0 -e0 awk '{print $3}'\
+| stdbuf -i0 -o0 -e0 awk '{print $4}'\
 | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
 sys_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
-| stdbuf -i0 -o0 -e0 awk '{if($2==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
 | stdbuf -i0 -o0 -e0 head -n -1\
-| stdbuf -i0 -o0 -e0 awk '{print $5}'\
+| stdbuf -i0 -o0 -e0 awk '{print $6}'\
 | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
 soft_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
-| stdbuf -i0 -o0 -e0 awk '{if($2==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
 | stdbuf -i0 -o0 -e0 head -n -1\
-| stdbuf -i0 -o0 -e0 awk '{print $8}'\
+| stdbuf -i0 -o0 -e0 awk '{print $9}'\
 | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
 idle_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
-| stdbuf -i0 -o0 -e0 awk '{if($2==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
 | stdbuf -i0 -o0 -e0 head -n -1\
-| stdbuf -i0 -o0 -e0 awk '{print $12}'\
+| stdbuf -i0 -o0 -e0 awk '{print $13}'\
 | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
 util_avg=`stdbuf -i0 -o0 -e0 cat $input_file\
-| stdbuf -i0 -o0 -e0 awk '{if($2==0){print $0}}'\
+| stdbuf -i0 -o0 -e0 awk '{if($3==0){print $0}}'\
 | stdbuf -i0 -o0 -e0 head -n -1\
-| stdbuf -i0 -o0 -e0 awk '{print 100 - $12}'\
+| stdbuf -i0 -o0 -e0 awk '{print 100 - $13}'\
 | stdbuf -i0 -o0 -e0 awk '{ total +=$1;count++;} END{print total/count}'`
 
 echo "RESULT-CPU-user-avg "$usr_avg
