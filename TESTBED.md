@@ -112,6 +112,8 @@ cmake ..
 cmake --build .
 ```
 
+**Note that `pcm-iio` reports statistics every 3 seconds by default.**
+
 
 You can also use Perf tool to measure IOTLB metrics. To install Perf tool, you can run the following command:
 

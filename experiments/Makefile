@@ -13,7 +13,7 @@ NPF_INT_FLAGS := --show-full --rand-env 65536 --build-folder ./npf_build/ ${NPF_
 NPF_INT_FLAGS := $(NPF_INT_FLAGS) #--force-retest #--no-test
 
 # Tools path 
-PCM_PATH=$(CURDIR)/../pcm/build/bin/ # PCM (pcm-iio.x)
+PCM_PATH=$(CURDIR)/../pcm/build/bin/ # PCM (pcm-iio)
 EXP_PATH=$(CURDIR) # Current Directory
 DUT_PMU_PATH=$(CURDIR)/../pmu-tools/ # pmu-tools 
 

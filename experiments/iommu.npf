@@ -35,6 +35,11 @@ var_names+={GEN_CORES:Number of Simultaneous Connections}
 
 var_names+={IOTLB-MISS-PERMIB:IOTLB Misses per MiB}
 
+var_lim+={result:0-}
+graph_tick_params={direction:in,which:both,axis:both,grid_linestyle:dotted,bottom:true,top:true,right:true,left:true,grid_color:#444444}
+graph_grid_linestyle=dotted
+var_grid=True
+
 //graph_cross_reference={BW:RATE, IOTLB-MISS-PERMIB:RATE, CPU-util-avg:RATE, IOTLB-MISSRATE:RATE}
 //graph_cross_reference+={BW:GEN_RATE, IOTLB-MISS-PERMIB:GEN_RATE, CPU-util-avg:GEN_RATE, IOTLB-MISSRATE:GEN_RATE}
 
@@ -130,7 +135,9 @@ DUT_INTERFACE=EXPAND(${dut:0:ifname})
 %pyexit
 # Calculate IOLTB Per MiB
 import sys
-RESULTS["IOTLB-MISS-PERMIB"] = (RESULTS["IOTLBMISS-sum"]/60) / (RESULTS["BW"]/(8*1024*1024))
+# pcm-iio reports statistics every 3 seconds by default
+# You can check `#define PCM_DELAY_DEFAULT` in pcm-iio.cpp
+RESULTS["IOTLB-MISS-PERMIB"] = (RESULTS["IOTLBMISS-sum"]/(RESULTS["TEST_TIME"]/3)) / (RESULTS["BW"]/(8*1024*1024))
 print("RESULT-IOTLB-MISS-PERMIB ",RESULTS["IOTLB-MISS-PERMIB"],file=sys.stdout)
 #rate = RESULTS["RATE"]
 #RESULTS["GEN_RATE"] = (rate[:-1] * RESULTS["GEN_CORES"])
