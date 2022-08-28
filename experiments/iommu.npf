@@ -60,9 +60,9 @@ SRV_IP=192.168.201.30
 SRV_PORT=5001
 MSG_SIZE=128K
 TEST_TIME=60
-RATEFLAG=
-RATE=
-ratetune:RATE={50M,100M,150M,200M,250M,300M,350M,400M,450M,500M,550M,600M}
+RATEFLAG=-b
+RATE=550
+ratetune:RATE={50,100,150,200,250,300,350,400,450,500,550,600}
 ratetune:RATEFLAG=-b
 MTU=1500
 mtutune:MTU={1500,3072,3690,4608,6144,7680,9000}
@@ -131,17 +131,15 @@ PERF_EVENTS=amd_iommu/mem_pass_untrans/,amd_iommu/mem_pass_pretrans/,amd_iommu/m
 TIME_EXP_OUTPUT_NAME=EXPAND(${MTU}-${DROP_FREQ_DUT}-${DROP_FREQ_CLIENT}-${linkdrop}-${tcp_type}-${GEN_CORES})
 CLIENT_INTERFACE=EXPAND(${client:0:ifname})
 DUT_INTERFACE=EXPAND(${dut:0:ifname})
+GET_RATE=$(( (int) ($RATE * $GEN_CORES) ))
 
 %pyexit
 # Calculate IOLTB Per MiB
 import sys
 # pcm-iio reports statistics every 3 seconds by default
 # You can check `#define PCM_DELAY_DEFAULT` in pcm-iio.cpp
-RESULTS["IOTLB-MISS-PERMIB"] = (RESULTS["IOTLBMISS-sum"]/(RESULTS["TEST_TIME"]/3)) / (RESULTS["BW"]/(8*1024*1024))
+RESULTS["IOTLB-MISS-PERMIB"] = (RESULTS["IOTLBMISS-sum"]/(60/3)) / (RESULTS["BW"]/(8*1024*1024))
 print("RESULT-IOTLB-MISS-PERMIB ",RESULTS["IOTLB-MISS-PERMIB"],file=sys.stdout)
-#rate = RESULTS["RATE"]
-#RESULTS["GEN_RATE"] = (rate[:-1] * RESULTS["GEN_CORES"])
-#print("RESULT-GEN_RATE ", RESULTS["GEN_RATE"],file=sys.stdout)
 
 %perf,-pcm:script@dut sudo=true name=profiler autokill=false waitfor=GEN_BEGIN delay=0
 
@@ -293,6 +291,7 @@ bash iio.sh
 echo ${PCM_PATH}/${PCM_OUTPUT} 
 echo "Launching IIO-parser script"
 unbuffer bash iio-processing.sh ${PCM_PATH}/${PCM_OUTPUT}
+
 rm -f ${PCM_PATH}/${PCM_OUTPUT}
 
 
@@ -748,6 +747,8 @@ rm -f ${QUEUE_OUTPUT}
 
 %script@dut sudo=true autokill=false waitfor=READY delay=0
 
+echo "RESULT-GEN_RATE "
+
 // Set processor frequency
 echo "Setting cpu frequency of 0-\$(( $(nproc) - 1))"
 sudo cpupower --cpu 0-\$(( $(nproc) - 1)) frequency-set -d ${FREQ}M -u ${FREQ}M 2> /dev/null 1> /dev/null
@@ -867,8 +868,8 @@ echo
 
 core_set_client=`for i in $(seq 0 $((${GEN_CORES}-1))); do c=$(bc -l <<<"2*$i + 1"); echo -n $c","; done | sed 's/.$//'`
 
-numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | stdbuf -i0 -o0 -e0 tee results
-//taskset -c ${core_set_client} iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | stdbuf -i0 -o0 -e0 tee results
+numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m | stdbuf -i0 -o0 -e0 tee results
+//taskset -c ${core_set_client} iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m | stdbuf -i0 -o0 -e0 tee results
 bw=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($7=="Gbits/sec"){print $6*1000000000} else if($7=="Mbits/sec"){print $6 * 1000000} else if ($7=="Kbits/sec"){print $6 * 1000}else {print $6}}')
 transfer=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($5=="GBytes"){print $4*1000000000} else if($5=="MBytes"){print $4 * 1000000} else if ($5=="KBytes"){print $4 * 1000}else {print $4}}')
 mss=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep MSS | stdbuf -i0 -o0 -e0 head -n 1 | stdbuf -i0 -o0 -e0 awk -F"=" '{print $2}' | stdbuf -i0 -o0 -e0 awk -F")" '{print $1}')
@@ -887,8 +888,8 @@ echo
 
 core_set_client=`for i in $(seq 0 $((${CORES}-1))); do c=$(bc -l <<<"2*$i + 1"); echo -n $c","; done | sed 's/.$//'`
 
-numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | stdbuf -i0 -o0 -e0 tee results
-//taskset -c ${core_set_client} iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m | stdbuf -i0 -o0 -e0 tee results
+numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m | stdbuf -i0 -o0 -e0 tee results
+//taskset -c ${core_set_client} iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m | stdbuf -i0 -o0 -e0 tee results
 bw=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($7=="Gbits/sec"){print $6*1000000000} else if($7=="Mbits/sec"){print $6 * 1000000} else if ($7=="Kbits/sec"){print $6 * 1000}else {print $6}}')
 transfer=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 awk '{if($5=="GBytes"){print $4*1000000000} else if($5=="MBytes"){print $4 * 1000000} else if ($5=="KBytes"){print $4 * 1000}else {print $4}}')
 mss=$(stdbuf -i0 -o0 -e0 cat results | stdbuf -i0 -o0 -e0 grep MSS | stdbuf -i0 -o0 -e0 head -n 1 | stdbuf -i0 -o0 -e0 awk -F"=" '{print $2}' | stdbuf -i0 -o0 -e0 awk -F")" '{print $1}')
@@ -926,7 +927,7 @@ echo
 
 core_set_client=`for i in $(seq 0 $((${GEN_CORES}-1))); do c=$(bc -l <<<"2*$i + 1"); echo -n $c","; done | sed 's/.$//'`
 
-stdbuf -i0 -o0 -e0 numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE} -m -i 1 > iperf-results
+stdbuf -i0 -o0 -e0 numactl --cpunodebind=0 iperf -c $SRV_IP -p $SRV_PORT -P${GEN_CORES} -t ${TEST_TIME} -l ${MSG_SIZE} ${RATEFLAG} ${RATE}M -m -i 1 > iperf-results
 bw=$(stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 tail -n 1 | stdbuf -i0 -o0 -e0 awk '{if($7=="Gbits/sec"){print $6*1000000000} else if($7=="Mbits/sec"){print $6 * 1000000} else if ($7=="Kbits/sec"){print $6 * 1000}else {print $6}}')
 transfer=$(stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep SUM | stdbuf -i0 -o0 -e0 tail -n 1 | stdbuf -i0 -o0 -e0 awk '{if($5=="GBytes"){print $4*1000000000} else if($5=="MBytes"){print $4 * 1000000} else if ($5=="KBytes"){print $4 * 1000}else {print $4}}')
 mss=$(stdbuf -i0 -o0 -e0 cat iperf-results | stdbuf -i0 -o0 -e0 grep MSS | stdbuf -i0 -o0 -e0 head -n 1 | stdbuf -i0 -o0 -e0 awk -F"=" '{print $2}' | stdbuf -i0 -o0 -e0 awk -F")" '{print $1}')
