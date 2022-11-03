@@ -1,5 +1,7 @@
 # iommu-bench
 
+[![DOI](https://zenodo.org/badge/525288873.svg)](https://zenodo.org/badge/latestdoi/525288873)
+
 This repository contains information to benchmark IOMMU by (re)doing some of the experiments performed in the [paper][iommu-paper].
 
 
