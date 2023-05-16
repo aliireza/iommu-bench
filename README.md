@@ -40,23 +40,21 @@ Our paper uses different Linux kernels to perform experiments, see `https://gith
 If you use PacketMill or X-Change in any context, please cite our [paper][iommu-paper]:
 
 ```bibtex
-@inproceedings{farshin-iommu,
-author = {Farshin, Alireza and Rizzo, Luigi and Elmeleegy, Khaled and Kostić, Dejan},
- title = {{Overcoming the IOTLB Wall for Multi-100-Gbps Linux-based Networking}},
- booktitle = {},
- series = {},
- year = {2023},
- isbn = {},
- location = {},
- pages = {},
- articleno = {},
- numpages = {},
- url = {},
- doi = {},
- acmid = {},
- publisher = {},
- address = {},
- keywords = {},
+@article{farshin-iommu,
+ title = {Overcoming the IOTLB wall for multi-100-Gbps Linux-based networking},
+ author = {Farshin, Alireza and Rizzo, Luigi and Elmeleegy, Khaled and Kostić, Dejan},
+ year = 2023,
+ month = may,
+ keywords = {200 Gbps, Hugepages, iPerf, IOMMU, IOTLB, Linux kernel, Packet processing},
+ abstract = {
+This article explores opportunities to mitigate the performance impact of IOMMU on high-speed network traffic, as used in the Linux kernel. We first characterize IOTLB behavior and its effects on recent Intel Xeon Scalable & AMD EPYC processors at 200 Gbps, by analyzing the impact of different factors contributing to IOTLB misses and causing throughput drop (up to 20% compared to the no-IOMMU case in our experiments). Secondly, we discuss and analyze possible mitigations, including proposals and evaluation of a practical hugepage-aware memory allocator for the network device drivers to employ hugepage IOTLB entries in the Linux kernel. Our evaluation shows that using hugepage-backed buffers can completely recover the throughput drop introduced by IOMMU. Moreover, we formulate a set of guidelines that enable network developers to tune their systems to avoid the “IOTLB wall”, \textit{i.e}., the point where excessive IOTLB misses cause throughput drop. Our takeaways signify the importance of having a call to arms to rethink Linux-based I/O management at higher data rates.
+},
+ volume = 9,
+ pages = {e1385},
+ journal = {PeerJ Computer Science},
+ issn = {2376-5992},
+ url = {https://doi.org/10.7717/peerj-cs.1385},
+ doi = {10.7717/peerj-cs.1385}
 }
 ```
 
